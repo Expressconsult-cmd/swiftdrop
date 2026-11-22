@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SwiftDrop — P2P Drop & Reflect</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+</head>
+<body>
+  <div id="dropOverlay" class="drop-overlay hidden">
+    <div class="drop-overlay-box">
+      <div class="drop-icon">⬇</div>
+      <h2>Drop files to reflect</h2>
+      <p>Streams directly P2P to all paired devices</p>
+    </div>
+  </div>
+
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-logo">⚡</div>
+        <div>
+          <h1>SwiftDrop</h1>
+          <p class="subtitle">Serverless P2P Drop &amp; Reflect</p>
+        </div>
+      </div>
+
+      <div class="device-pill" id="devicePill" title="Click to rename your device">
+        <span id="deviceIcon">💻</span>
+        <span id="deviceNameDisplay">Detecting...</span>
+        <button id="editNameBtn" class="icon-btn" type="button" aria-label="Rename device">✎</button>
+      </div>
+    </header>
+
+    <div id="statusBanner" class="status-banner hidden"></div>
+
+    <!-- LANDING / CONNECT SCREEN -->
+    <main id="connectView" class="connect-grid">
+      <section class="card hero-card">
+        <div class="card-badge">Host</div>
+        <h2>Start a Sharing Room</h2>
+        <p>Generate a 6-digit PIN and pair your phone or another laptop directly — no server or login needed.</p>
+        <button id="createRoomBtn" class="btn btn-primary btn-lg" type="button">
+          Generate 6-Digit PIN
+        </button>
+      </section>
+
+      <section class="card hero-card">
+        <div class="card-badge badge-alt">Join</div>
+        <h2>Connect with PIN</h2>
+        <p>Enter the 6-digit PIN shown on your other laptop or phone.</p>
+        <form id="joinForm" class="join-form">
+          <input
+            id="pinInput"
+            class="pin-input"
+            type="text"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            maxlength="6"
+            placeholder="000000"
+            aria-label="6-digit PIN"
+          />
+          <button id="joinRoomBtn" class="btn btn-secondary btn-lg" type="submit">
+            Connect
+          </button>
+        </form>
+      </section>
+    </main>
+
+    <!-- ACTIVE ROOM SCREEN -->
+    <main id="roomView" class="room-view hidden">
+      <section class="card room-header-card">
+        <div class="pin-block">
+          <span class="label">ROOM PIN</span>
+          <div class="pin-row">
+            <span id="activePinDisplay" class="pin-code">000 000</span>
+            <button id="copyPinBtn" class="btn btn-sm btn-ghost" type="button">Copy PIN</button>
+            <button id="toggleQrBtn" class="btn btn-sm btn-ghost" type="button">QR / Link</button>
+          </div>
+        </div>
+
+        <div class="room-actions">
+          <label class="toggle-wrap" title="Automatically save incoming files on this device">
+            <input type="checkbox" id="autoDownloadToggle" />
+            <span class="toggle-slider"></span>
+            <span class="toggle-text">Auto-save files</span>
+          </label>
+          <button id="leaveRoomBtn" class="btn btn-danger btn-sm" type="button">Leave</button>
+        </div>
+      </section>
+
+      <!-- QR / SHARE LINK PANEL -->
+      <section id="qrPanel" class="card qr-panel hidden">
+        <div class="qr-wrap">
+          <img id="qrImage" alt="Scan to join SwiftDrop room" />
+        </div>
+        <div class="qr-details">
+          <h3>Scan from Phone or Tablet</h3>
+          <p>Scan this QR code or open the link below on your second device to connect automatically:</p>
+          <div class="url-copy-row">
+            <input id="shareUrlInput" type="text" readonly />
+            <button id="copyUrlBtn" class="btn btn-primary btn-sm" type="button">Copy Link</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- CONNECTED PEERS -->
+      <section class="peers-strip" id="peersStrip"></section>
+
+      <!-- DROP & REFLECT COMPOSER -->
+      <section class="composer-grid">
+        <div id="dropzone" class="card dropzone" tabindex="0">
+          <input id="fileInput" type="file" multiple hidden />
+          <div class="dropzone-content">
+            <div class="dz-icon">📁</div>
+            <h3>Drop files here or tap to browse</h3>
+            <p>Photos, videos, docs, ZIPs — up to 500 MB per file (direct P2P)</p>
+            <button id="browseBtn" class="btn btn-primary" type="button">Select Files</button>
+          </div>
+        </div>
+
+        <form id="textForm" class="card text-reflect-card">
+          <h3>Reflect Text or Links</h3>
+          <textarea
+            id="textInput"
+            rows="4"
+            placeholder="Paste a link, note, code snippet, or password..."
+          ></textarea>
+          <div class="text-actions">
+            <span class="hint">Ctrl + Enter to send</span>
+            <button class="btn btn-secondary" type="submit">Reflect Now</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- ACTIVE TRANSFERS -->
+      <section id="transfersContainer" class="uploads-list hidden"></section>
+
+      <!-- REFLECTED ITEMS FEED -->
+      <section class="feed-section">
+        <div class="feed-header">
+          <h3>Shared &amp; Reflected</h3>
+          <span id="itemCountBadge" class="count-badge">0 items</span>
+        </div>
+        <div id="emptyFeed" class="empty-feed card">
+          No files or text shared yet. Once another device joins with your PIN, drop a file or reflect text here!
+        </div>
+        <div id="feedList" class="feed-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>
