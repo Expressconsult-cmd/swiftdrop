@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SwiftDrop — P2P Drop & Reflect</title>
   <link rel="stylesheet" href="style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 </head>
 <body>
   <div id="dropOverlay" class="drop-overlay hidden">
@@ -13,6 +14,22 @@
       <div class="drop-icon">⬇</div>
       <h2>Drop files to reflect</h2>
       <p>Streams directly P2P to all paired devices</p>
+    </div>
+  </div>
+
+  <!-- QR SCANNER MODAL -->
+  <div id="scannerModal" class="scanner-modal hidden">
+    <div class="card scanner-box">
+      <div class="scanner-header">
+        <h3>Scan SwiftDrop QR Code</h3>
+        <button id="closeScannerBtn" class="btn btn-sm btn-ghost" type="button">Close</button>
+      </div>
+      <div class="scanner-video-wrap">
+        <video id="scannerVideo" autoplay playsinline muted></video>
+        <div class="scanner-frame"></div>
+      </div>
+      <canvas id="scannerCanvas" hidden></canvas>
+      <p id="scannerStatus" class="scanner-status">Point your camera at the QR code on the other device...</p>
     </div>
   </div>
 
@@ -49,7 +66,7 @@
       <section class="card hero-card">
         <div class="card-badge badge-alt">Join</div>
         <h2>Connect with PIN</h2>
-        <p>Enter the 6-digit PIN shown on your other laptop or phone.</p>
+        <p>Enter the 6-digit PIN shown on your other device, or scan its QR code.</p>
         <form id="joinForm" class="join-form">
           <input
             id="pinInput"
@@ -65,6 +82,9 @@
             Connect
           </button>
         </form>
+        <button id="scanQrBtn" class="btn btn-ghost" type="button">
+          📷 Scan QR Code
+        </button>
       </section>
     </main>
 
@@ -97,7 +117,7 @@
         </div>
         <div class="qr-details">
           <h3>Scan from Phone or Tablet</h3>
-          <p>Scan this QR code or open the link below on your second device to connect automatically:</p>
+          <p>Scan this QR code with your camera (or click <strong>Scan QR Code</strong> on the other device) to connect automatically:</p>
           <div class="url-copy-row">
             <input id="shareUrlInput" type="text" readonly />
             <button id="copyUrlBtn" class="btn btn-primary btn-sm" type="button">Copy Link</button>
