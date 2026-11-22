@@ -1,11 +1,11 @@
 import { joinRoom } from 'https://esm.run/trystero@0.27.0';
+import { createQrSvgDataUrl } from './qr.js';
 
 const MAX_FILE_BYTES = 500 * 1024 * 1024; // 500 MB per file
 
-// Unique namespace scoped to your GitHub Pages URL so PINs don't collide with other sites
 const cleanPath = window.location.pathname.replace(/index\.html$/i, '');
 const APP_ID =
-  'swiftdrop-p2p-' +
+  'express-swiftdrop-' +
   (window.location.host + cleanPath).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60);
 
 // Elements
@@ -19,6 +19,13 @@ const deviceNameDisplay = document.getElementById('deviceNameDisplay');
 const createRoomBtn = document.getElementById('createRoomBtn');
 const joinForm = document.getElementById('joinForm');
 const pinInput = document.getElementById('pinInput');
+const scanQrBtn = document.getElementById('scanQrBtn');
+
+const scannerModal = document.getElementById('scannerModal');
+const closeScannerBtn = document.getElementById('closeScannerBtn');
+const scannerVideo = document.getElementById('scannerVideo');
+const scannerCanvas = document.getElementById('scannerCanvas');
+const scannerStatus = document.getElementById('scannerStatus');
 
 const activePinDisplay = document.getElementById('activePinDisplay');
 const copyPinBtn = document.getElementById('copyPinBtn');
@@ -53,17 +60,23 @@ let textAction = null;
 let syncTextAction = null;
 let fileAction = null;
 let deleteAction = null;
+let cancelTransferAction = null;
+
+let scannerStream = null;
+let scannerRafId = null;
 
 const peersMap = new Map(); // peerId -> { name, type }
-const itemsMap = new Map(); // itemId -> { item, blobUrl? }
-const transferRows = new Map(); // transferKey -> { row, fill, statSpan, startTime }
+const itemsMap = new Map(); // itemId -> { item, blobUrl }
+const transferRows = new Map(); // key -> { row, fill, statSpan, cancelBtn, startTime }
+const activeSends = new Map(); // fileId -> AbortController
+const cancelledReceives = new Set(); // fileId
 let localTextHistory = [];
 let toastTimer = null;
 let dragDepth = 0;
 
 if (window.location.protocol === 'file:') {
   showBanner(
-    'ES Modules require HTTPS/HTTP. Host these 3 files on GitHub Pages (or run a local server like VS Code Live Server) instead of opening index.html directly.'
+    'ES Modules require HTTPS/HTTP. Host these files on GitHub Pages (or run a local server) instead of opening index.html directly.'
   );
 }
 
@@ -85,7 +98,7 @@ function detectDevice() {
   else if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) browser = 'Safari';
   else if (/Firefox/i.test(ua)) browser = 'Firefox';
 
-  const saved = localStorage.getItem('swiftdrop_device_name');
+  const saved = localStorage.getItem('express_swiftdrop_name');
   return {
     name: saved || (browser ? `${osName} (${browser})` : osName),
     type: isMobile ? 'mobile' : 'desktop'
@@ -152,23 +165,108 @@ function updateUrlPin(pin) {
   window.history.replaceState({}, '', url.toString());
 }
 
-async function updateQrCode() {
+function updateQrCode() {
   if (!activePin) return;
   const shareUrl = `${window.location.origin}${cleanPath}?pin=${activePin}`;
   shareUrlInput.value = shareUrl;
-  if (window.QRCode && typeof window.QRCode.toDataURL === 'function') {
-    try {
-      qrImage.src = await window.QRCode.toDataURL(shareUrl, { width: 220, margin: 1 });
-    } catch {
-      // Ignore QR errors
+  try {
+    qrImage.src = createQrSvgDataUrl(shareUrl, 4);
+  } catch (err) {
+    showToast('Could not generate QR code');
+  }
+}
+
+// Built-in Camera QR Scanner
+function extractPinFromQr(rawText) {
+  const text = String(rawText || '').trim();
+  try {
+    const parsed = new URL(text);
+    const param = parsed.searchParams.get('pin');
+    if (param) {
+      const cleaned = param.replace(/\D/g, '');
+      if (cleaned.length === 6) return cleaned;
     }
+  } catch {
+    // Not a URL
+  }
+  const digits = text.replace(/\D/g, '');
+  return digits.length === 6 ? digits : null;
+}
+
+function stopQrScanner() {
+  if (scannerRafId) {
+    cancelAnimationFrame(scannerRafId);
+    scannerRafId = null;
+  }
+  if (scannerStream) {
+    scannerStream.getTracks().forEach((track) => track.stop());
+    scannerStream = null;
+  }
+  scannerVideo.srcObject = null;
+  scannerModal.classList.add('hidden');
+}
+
+async function startQrScanner() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showToast('Camera access requires HTTPS and a supported browser.');
+    return;
+  }
+  if (typeof window.jsQR !== 'function') {
+    showToast('Camera QR scanner library is unavailable.');
+    return;
+  }
+
+  scannerStatus.textContent = 'Starting camera...';
+  scannerModal.classList.remove('hidden');
+
+  try {
+    scannerStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' } },
+      audio: false
+    });
+    scannerVideo.srcObject = scannerStream;
+    await scannerVideo.play();
+    scannerStatus.textContent = 'Point your camera at the QR code on the other device...';
+
+    const ctx = scannerCanvas.getContext('2d', { willReadFrequently: true });
+
+    const tick = () => {
+      if (!scannerStream) return;
+      if (scannerVideo.readyState === scannerVideo.HAVE_ENOUGH_DATA) {
+        scannerCanvas.width = scannerVideo.videoWidth;
+        scannerCanvas.height = scannerVideo.videoHeight;
+        ctx.drawImage(scannerVideo, 0, 0, scannerCanvas.width, scannerCanvas.height);
+
+        const imgData = ctx.getImageData(0, 0, scannerCanvas.width, scannerCanvas.height);
+        const code = window.jsQR(imgData.data, imgData.width, imgData.height, {
+          inversionAttempts: 'dontInvert'
+        });
+
+        if (code && code.data) {
+          const pin = extractPinFromQr(code.data);
+          if (pin) {
+            stopQrScanner();
+            showToast(`Scanned PIN ${pin}! Connecting...`);
+            enterRoom(pin, { showQr: false });
+            return;
+          } else {
+            scannerStatus.textContent = 'QR code found, but it is not an Express SwiftDrop room.';
+          }
+        }
+      }
+      scannerRafId = requestAnimationFrame(tick);
+    };
+
+    scannerRafId = requestAnimationFrame(tick);
+  } catch {
+    stopQrScanner();
+    showToast('Camera permission denied or no camera found.');
   }
 }
 
 function renderPeers() {
   peersStrip.innerHTML = '';
 
-  // Self chip
   const selfChip = document.createElement('div');
   selfChip.className = 'peer-chip';
   const selfDot = document.createElement('span');
@@ -212,7 +310,17 @@ function updateItemCount() {
   emptyFeed.classList.toggle('hidden', count > 0);
 }
 
-function getOrCreateTransferRow(key, labelText) {
+function removeTransferRow(key) {
+  const entry = transferRows.get(key);
+  if (!entry) return;
+  entry.row.remove();
+  transferRows.delete(key);
+  if (transfersContainer.children.length === 0) {
+    transfersContainer.classList.add('hidden');
+  }
+}
+
+function getOrCreateTransferRow(key, labelText, onCancel) {
   transfersContainer.classList.remove('hidden');
   if (transferRows.has(key)) return transferRows.get(key);
 
@@ -223,12 +331,26 @@ function getOrCreateTransferRow(key, labelText) {
   meta.className = 'upload-meta';
 
   const nameSpan = document.createElement('span');
+  nameSpan.className = 'upload-title';
   nameSpan.textContent = labelText;
+
+  const right = document.createElement('div');
+  right.className = 'upload-right';
 
   const statSpan = document.createElement('span');
   statSpan.textContent = '0%';
 
-  meta.append(nameSpan, statSpan);
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'btn btn-danger btn-xs';
+  cancelBtn.type = 'button';
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.addEventListener('click', () => {
+    cancelBtn.disabled = true;
+    onCancel?.();
+  });
+
+  right.append(statSpan, cancelBtn);
+  meta.append(nameSpan, right);
 
   const track = document.createElement('div');
   track.className = 'progress-track';
@@ -239,7 +361,7 @@ function getOrCreateTransferRow(key, labelText) {
   row.append(meta, track);
   transfersContainer.prepend(row);
 
-  const entry = { row, fill, statSpan, startTime: Date.now() };
+  const entry = { row, fill, statSpan, cancelBtn, startTime: Date.now() };
   transferRows.set(key, entry);
   return entry;
 }
@@ -249,13 +371,8 @@ function finishTransferRow(key, doneLabel = 'Done!') {
   if (!entry) return;
   entry.fill.style.width = '100%';
   entry.statSpan.textContent = doneLabel;
-  setTimeout(() => {
-    entry.row.remove();
-    transferRows.delete(key);
-    if (transfersContainer.children.length === 0) {
-      transfersContainer.classList.add('hidden');
-    }
-  }, 1200);
+  entry.cancelBtn.classList.add('hidden');
+  setTimeout(() => removeTransferRow(key), 1100);
 }
 
 function triggerDownload(url, filename) {
@@ -398,7 +515,7 @@ function removeFeedItem(itemId) {
   updateItemCount();
 }
 
-async function enterRoom(pin) {
+async function enterRoom(pin, { showQr = false } = {}) {
   if (room) {
     await leaveCurrentRoom();
   }
@@ -407,6 +524,7 @@ async function enterRoom(pin) {
   activePinDisplay.textContent = `${pin.slice(0, 3)} ${pin.slice(3)}`;
   connectView.classList.add('hidden');
   roomView.classList.remove('hidden');
+  qrPanel.classList.toggle('hidden', !showQr);
   updateUrlPin(pin);
   updateQrCode();
   renderPeers();
@@ -424,6 +542,7 @@ async function enterRoom(pin) {
   syncTextAction = room.makeAction('text-sync');
   fileAction = room.makeAction('file-drop');
   deleteAction = room.makeAction('delete-item');
+  cancelTransferAction = room.makeAction('cancel-transfer');
 
   room.onPeerJoin(({ peerId }) => {
     if (!peersMap.has(peerId)) {
@@ -471,24 +590,65 @@ async function enterRoom(pin) {
     if (payload?.itemId) removeFeedItem(payload.itemId);
   });
 
-  fileAction.onReceive((offer) => {
-    return offer.byteLength <= MAX_FILE_BYTES;
+  cancelTransferAction.onMessage((payload) => {
+    const id = payload?.id;
+    if (!id) return;
+
+    if (payload.by === 'sender') {
+      cancelledReceives.add(id);
+      removeTransferRow(`recv-${id}`);
+      showToast('Sender cancelled the file transfer.');
+    } else if (payload.by === 'receiver') {
+      const controller = activeSends.get(id);
+      if (controller && peersMap.size <= 1) {
+        controller.abort();
+        activeSends.delete(id);
+        removeTransferRow(`send-${id}`);
+        removeFeedItem(id);
+        showToast('Receiver cancelled the file transfer.');
+      }
+    }
   });
 
-  fileAction.onReceiveProgress((pct, { metadata }) => {
-    const key = `recv-${metadata?.id || metadata?.name || 'file'}`;
+  fileAction.onReceive(({ byteLength, metadata }) => {
+    if (metadata?.id && cancelledReceives.has(metadata.id)) return false;
+    return byteLength <= MAX_FILE_BYTES;
+  });
+
+  fileAction.onReceiveProgress((pct, { peerId, metadata }) => {
+    const id = metadata?.id || metadata?.name || 'file';
+    if (cancelledReceives.has(id)) return;
+
+    const key = `recv-${id}`;
+    const name = metadata?.name || 'file';
     const entry = getOrCreateTransferRow(
       key,
-      `Receiving ${metadata?.name || 'file'} (${formatBytes(metadata?.size || 0)})`
+      `Receiving ${name} (${formatBytes(metadata?.size || 0)})`,
+      () => {
+        cancelledReceives.add(id);
+        removeTransferRow(key);
+        cancelTransferAction?.send({ id, by: 'receiver' }, { target: peerId }).catch(() => {});
+        showToast(`Stopped receiving ${name}`);
+      }
     );
+
     const percent = Math.min(100, Math.round(pct * 100));
+    const elapsed = Math.max((Date.now() - entry.startTime) / 1000, 0.1);
+    const speed = metadata?.size ? ` • ${formatBytes((metadata.size * pct) / elapsed)}/s` : '';
     entry.fill.style.width = `${percent}%`;
-    entry.statSpan.textContent = `${percent}%`;
+    entry.statSpan.textContent = `${percent}%${speed}`;
   });
 
   fileAction.onMessage((bytes, { metadata }) => {
     const id = metadata?.id || crypto.randomUUID();
     const key = `recv-${id}`;
+
+    if (cancelledReceives.has(id)) {
+      cancelledReceives.delete(id);
+      removeTransferRow(key);
+      return;
+    }
+
     finishTransferRow(key, 'Received!');
 
     const mimeType = metadata?.type || 'application/octet-stream';
@@ -512,6 +672,14 @@ async function enterRoom(pin) {
 }
 
 async function leaveCurrentRoom() {
+  for (const [, controller] of activeSends.entries()) {
+    try {
+      controller.abort();
+    } catch {}
+  }
+  activeSends.clear();
+  cancelledReceives.clear();
+
   if (room) {
     try {
       await room.leave();
@@ -526,6 +694,7 @@ async function leaveCurrentRoom() {
   syncTextAction = null;
   fileAction = null;
   deleteAction = null;
+  cancelTransferAction = null;
 
   peersMap.clear();
   for (const [, record] of itemsMap.entries()) {
@@ -561,7 +730,22 @@ async function sendFiles(fileList) {
 
     const id = crypto.randomUUID();
     const key = `send-${id}`;
-    const entry = getOrCreateTransferRow(key, `Sending ${file.name} (${formatBytes(file.size)})`);
+    const controller = new AbortController();
+    activeSends.set(id, controller);
+
+    const entry = getOrCreateTransferRow(
+      key,
+      `Sending ${file.name} (${formatBytes(file.size)})`,
+      () => {
+        if (!activeSends.has(id)) return;
+        controller.abort();
+        activeSends.delete(id);
+        cancelTransferAction?.send({ id, by: 'sender' }).catch(() => {});
+        removeTransferRow(key);
+        removeFeedItem(id);
+        showToast(`Cancelled sending ${file.name}`);
+      }
+    );
 
     const metadata = {
       id,
@@ -572,7 +756,6 @@ async function sendFiles(fileList) {
       createdAt: Date.now()
     };
 
-    // Show local preview immediately
     const localUrl = URL.createObjectURL(file);
     addFeedItem(
       {
@@ -588,9 +771,10 @@ async function sendFiles(fileList) {
       { blobUrl: localUrl, isIncoming: false }
     );
 
-    try {
-      await fileAction.send(file, {
+    fileAction
+      .send(file, {
         metadata,
+        signal: controller.signal,
         onProgress: (pct) => {
           const percent = Math.min(100, Math.round(pct * 100));
           const elapsed = Math.max((Date.now() - entry.startTime) / 1000, 0.1);
@@ -598,13 +782,25 @@ async function sendFiles(fileList) {
           entry.fill.style.width = `${percent}%`;
           entry.statSpan.textContent = `${percent}% • ${speed}/s`;
         }
+      })
+      .then(() => {
+        activeSends.delete(id);
+        finishTransferRow(key, 'Sent!');
+      })
+      .catch((err) => {
+        const wasCancelled =
+          controller.signal.aborted || err?.kind === 'aborted' || err?.name === 'AbortError';
+        activeSends.delete(id);
+        if (wasCancelled) {
+          removeTransferRow(key);
+          removeFeedItem(id);
+          return;
+        }
+        entry.cancelBtn.classList.add('hidden');
+        entry.statSpan.textContent = err?.kind === 'rejected' ? 'Declined' : 'Transfer failed';
+        entry.statSpan.style.color = '#fca5a5';
+        showToast(`Failed sending ${file.name}`);
       });
-      finishTransferRow(key, 'Sent!');
-    } catch (err) {
-      entry.statSpan.textContent = 'Transfer failed';
-      entry.statSpan.style.color = '#fca5a5';
-      showToast(`Failed sending ${file.name}`);
-    }
   }
 }
 
@@ -613,7 +809,7 @@ devicePill.addEventListener('click', () => {
   const next = prompt('Enter a name for this device:', deviceInfo.name);
   if (next && next.trim()) {
     deviceInfo.name = next.trim().slice(0, 40);
-    localStorage.setItem('swiftdrop_device_name', deviceInfo.name);
+    localStorage.setItem('express_swiftdrop_name', deviceInfo.name);
     deviceNameDisplay.textContent = deviceInfo.name;
     renderPeers();
     helloAction?.send({ name: deviceInfo.name, type: deviceInfo.type }).catch(() => {});
@@ -622,7 +818,7 @@ devicePill.addEventListener('click', () => {
 
 createRoomBtn.addEventListener('click', () => {
   const pin = generateSixDigitPin();
-  enterRoom(pin);
+  enterRoom(pin, { showQr: true });
 });
 
 pinInput.addEventListener('input', () => {
@@ -637,7 +833,13 @@ joinForm.addEventListener('submit', (e) => {
     pinInput.focus();
     return;
   }
-  enterRoom(pin);
+  enterRoom(pin, { showQr: false });
+});
+
+scanQrBtn.addEventListener('click', startQrScanner);
+closeScannerBtn.addEventListener('click', stopQrScanner);
+scannerModal.addEventListener('click', (e) => {
+  if (e.target === scannerModal) stopQrScanner();
 });
 
 copyPinBtn.addEventListener('click', () => {
@@ -749,6 +951,6 @@ const queryPin = new URLSearchParams(window.location.search).get('pin');
 if (queryPin) {
   const clean = queryPin.replace(/\D/g, '');
   if (clean.length === 6) {
-    enterRoom(clean);
+    enterRoom(clean, { showQr: false });
   }
 }
