@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Express SwiftDrop — P2P Drop & Reflect</title>
-  <link rel="stylesheet" href="style.css?v=4" />
+  <link rel="stylesheet" href="style.css?v=5" />
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 </head>
 <body>
@@ -32,6 +32,31 @@
     </div>
   </div>
 
+  <!-- TURN RELAY SETTINGS MODAL -->
+  <div id="turnModal" class="scanner-modal hidden">
+    <div class="card scanner-box">
+      <div class="scanner-header">
+        <h3>TURN Relay Settings (Optional)</h3>
+        <button id="closeTurnBtn" class="btn btn-sm btn-ghost" type="button">Close</button>
+      </div>
+      <p class="turn-help">
+        Not needed on the same Wi-Fi or Hotspot. To connect across <strong>mobile LTE &amp; separate Wi-Fi</strong>, paste a free Metered TURN API URL (<code>https://yourapp.metered.live/api/v1/turn/credentials?apiKey=...</code>):
+      </p>
+      <form id="turnForm" class="turn-form">
+        <input
+          id="turnUrlInput"
+          class="turn-input"
+          type="url"
+          placeholder="https://yourapp.metered.live/api/v1/turn/credentials?apiKey=..."
+        />
+        <div class="turn-actions">
+          <button id="clearTurnBtn" class="btn btn-danger btn-sm" type="button">Clear</button>
+          <button class="btn btn-primary btn-sm" type="submit">Save TURN URL</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <div class="app-shell">
     <header class="topbar">
       <div class="brand">
@@ -42,10 +67,15 @@
         </div>
       </div>
 
-      <div class="device-pill" id="devicePill" title="Click to rename your device">
-        <span id="deviceIcon">💻</span>
-        <span id="deviceNameDisplay">Detecting...</span>
-        <button id="editNameBtn" class="icon-btn" type="button" aria-label="Rename device">✎</button>
+      <div class="topbar-right">
+        <button id="turnBtn" class="btn btn-sm btn-ghost" type="button" title="Configure TURN relay for LTE/mobile networks">
+          ⚙ TURN
+        </button>
+        <div class="device-pill" id="devicePill" title="Click to rename your device">
+          <span id="deviceIcon">💻</span>
+          <span id="deviceNameDisplay">Detecting...</span>
+          <button id="editNameBtn" class="icon-btn" type="button" aria-label="Rename device">✎</button>
+        </div>
       </div>
     </header>
 
@@ -173,6 +203,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script type="module" src="app.js?v=4"></script>
+  <script type="module" src="app.js?v=5"></script>
 </body>
 </html>
