@@ -1,12 +1,12 @@
-import { joinRoom } from 'https://esm.run/trystero@0.27.0';
-import { createQrSvgDataUrl } from './qr.js';
+import { joinRoom, getRelaySockets } from 'https://esm.run/trystero@0.27.0';
+import { createQrSvgDataUrl } from './qr.js?v=4';
 
 const MAX_FILE_BYTES = 500 * 1024 * 1024; // 500 MB per file
 
-const cleanPath = window.location.pathname.replace(/index\.html$/i, '');
+// Scoped only to host so /repo, /repo/, and /repo/index.html always connect to the exact same room
 const APP_ID =
-  'express-swiftdrop-' +
-  (window.location.host + cleanPath).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60);
+  'express-swiftdrop-v4-' +
+  window.location.host.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
 
 // Elements
 const connectView = document.getElementById('connectView');
@@ -30,6 +30,8 @@ const scannerStatus = document.getElementById('scannerStatus');
 const activePinDisplay = document.getElementById('activePinDisplay');
 const copyPinBtn = document.getElementById('copyPinBtn');
 const toggleQrBtn = document.getElementById('toggleQrBtn');
+const relayStatusBadge = document.getElementById('relayStatusBadge');
+const reconnectBtn = document.getElementById('reconnectBtn');
 const leaveRoomBtn = document.getElementById('leaveRoomBtn');
 const autoDownloadToggle = document.getElementById('autoDownloadToggle');
 
@@ -62,11 +64,12 @@ let fileAction = null;
 let deleteAction = null;
 let cancelTransferAction = null;
 
+let relayPollTimer = null;
 let scannerStream = null;
 let scannerRafId = null;
 
 const peersMap = new Map(); // peerId -> { name, type }
-const itemsMap = new Map(); // itemId -> { item, blobUrl }
+const itemsMap = new Map(); // itemId -> { item, blobUrl, cancelBtn? }
 const transferRows = new Map(); // key -> { row, fill, statSpan, cancelBtn, startTime }
 const activeSends = new Map(); // fileId -> AbortController
 const cancelledReceives = new Set(); // fileId
@@ -167,12 +170,33 @@ function updateUrlPin(pin) {
 
 function updateQrCode() {
   if (!activePin) return;
-  const shareUrl = `${window.location.origin}${cleanPath}?pin=${activePin}`;
+  const shareUrlObj = new URL(window.location.href);
+  shareUrlObj.search = `?pin=${activePin}`;
+  shareUrlObj.hash = '';
+  const shareUrl = shareUrlObj.toString();
+
   shareUrlInput.value = shareUrl;
   try {
     qrImage.src = createQrSvgDataUrl(shareUrl, 4);
-  } catch (err) {
+  } catch {
     showToast('Could not generate QR code');
+  }
+}
+
+function updateRelayStatus() {
+  try {
+    const sockets = Object.values(getRelaySockets() || {});
+    const openCount = sockets.filter((s) => s && s.readyState === WebSocket.OPEN).length;
+    if (openCount > 0) {
+      relayStatusBadge.textContent = `Relays: ${openCount} online`;
+      relayStatusBadge.classList.add('online');
+    } else {
+      relayStatusBadge.textContent = 'Relays: connecting...';
+      relayStatusBadge.classList.remove('online');
+    }
+  } catch {
+    relayStatusBadge.textContent = 'Relays: active';
+    relayStatusBadge.classList.add('online');
   }
 }
 
@@ -343,7 +367,7 @@ function getOrCreateTransferRow(key, labelText, onCancel) {
   const cancelBtn = document.createElement('button');
   cancelBtn.className = 'btn btn-danger btn-xs';
   cancelBtn.type = 'button';
-  cancelBtn.textContent = 'Cancel';
+  cancelBtn.textContent = '✕ Cancel';
   cancelBtn.addEventListener('click', () => {
     cancelBtn.disabled = true;
     onCancel?.();
@@ -384,9 +408,8 @@ function triggerDownload(url, filename) {
   a.remove();
 }
 
-function addFeedItem(item, { blobUrl = null, isIncoming = false } = {}) {
+function addFeedItem(item, { blobUrl = null, isIncoming = false, onCancelSend = null } = {}) {
   if (!item || itemsMap.has(item.id)) return;
-  itemsMap.set(item.id, { item, blobUrl });
 
   const card = document.createElement('article');
   card.className = 'card item-card';
@@ -407,8 +430,19 @@ function addFeedItem(item, { blobUrl = null, isIncoming = false } = {}) {
   const actions = document.createElement('div');
   actions.className = 'item-actions';
 
+  let cardCancelBtn = null;
+
   if (item.kind === 'file') {
     title.textContent = `${item.name} (${formatBytes(item.size)})`;
+
+    if (onCancelSend) {
+      cardCancelBtn = document.createElement('button');
+      cardCancelBtn.className = 'btn btn-danger btn-sm';
+      cardCancelBtn.type = 'button';
+      cardCancelBtn.textContent = '✕ Cancel Sending';
+      cardCancelBtn.addEventListener('click', onCancelSend);
+      actions.appendChild(cardCancelBtn);
+    }
 
     if (blobUrl) {
       const dlBtn = document.createElement('a');
@@ -424,6 +458,10 @@ function addFeedItem(item, { blobUrl = null, isIncoming = false } = {}) {
     delBtn.type = 'button';
     delBtn.textContent = 'Remove';
     delBtn.addEventListener('click', () => {
+      if (activeSends.has(item.id)) {
+        onCancelSend?.();
+        return;
+      }
       removeFeedItem(item.id);
       deleteAction?.send({ itemId: item.id }).catch(() => {});
     });
@@ -500,8 +538,17 @@ function addFeedItem(item, { blobUrl = null, isIncoming = false } = {}) {
     card.appendChild(body);
   }
 
+  itemsMap.set(item.id, { item, blobUrl, cancelBtn: cardCancelBtn });
   feedList.prepend(card);
   updateItemCount();
+}
+
+function hideCardCancelButton(itemId) {
+  const record = itemsMap.get(itemId);
+  if (record?.cancelBtn) {
+    record.cancelBtn.remove();
+    record.cancelBtn = null;
+  }
 }
 
 function removeFeedItem(itemId) {
@@ -520,6 +567,7 @@ async function enterRoom(pin, { showQr = false } = {}) {
     await leaveCurrentRoom();
   }
 
+  showBanner('');
   activePin = pin;
   activePinDisplay.textContent = `${pin.slice(0, 3)} ${pin.slice(3)}`;
   connectView.classList.add('hidden');
@@ -529,13 +577,41 @@ async function enterRoom(pin, { showQr = false } = {}) {
   updateQrCode();
   renderPeers();
 
-  room = joinRoom(
-    {
-      appId: APP_ID,
-      maxReceiveBytes: MAX_FILE_BYTES + 64 * 1024 * 1024
-    },
-    pin
-  );
+  try {
+    room = joinRoom(
+      {
+        appId: APP_ID,
+        identity: 'none',
+        maxReceiveBytes: MAX_FILE_BYTES + 64 * 1024 * 1024,
+        rtcConfig: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun.cloudflare.com:3478' }
+          ]
+        }
+      },
+      pin
+    );
+  } catch (err) {
+    showBanner(`Could not start room: ${err?.message || 'Connection error'}`);
+    return;
+  }
+
+  updateRelayStatus();
+  clearInterval(relayPollTimer);
+  relayPollTimer = setInterval(updateRelayStatus, 2000);
+
+  room.onError((err) => {
+    const code = err?.code || '';
+    if (code === 'peer-connect-failed') {
+      showBanner('Peer found, but direct P2P handshake was blocked by network/NAT. Connecting both devices to the same Wi-Fi or Hotspot usually fixes this.');
+    } else if (code === 'relay-failed') {
+      showBanner('Signaling relay unreachable. Check your internet connection and tap Reconnect.');
+    } else if (err?.message) {
+      showBanner(err.message);
+    }
+  });
 
   helloAction = room.makeAction('hello');
   textAction = room.makeAction('text-reflect');
@@ -545,6 +621,7 @@ async function enterRoom(pin, { showQr = false } = {}) {
   cancelTransferAction = room.makeAction('cancel-transfer');
 
   room.onPeerJoin(({ peerId }) => {
+    showBanner('');
     if (!peersMap.has(peerId)) {
       peersMap.set(peerId, { name: 'Connected Device', type: 'desktop' });
     }
@@ -672,6 +749,9 @@ async function enterRoom(pin, { showQr = false } = {}) {
 }
 
 async function leaveCurrentRoom() {
+  clearInterval(relayPollTimer);
+  relayPollTimer = null;
+
   for (const [, controller] of activeSends.entries()) {
     try {
       controller.abort();
@@ -696,6 +776,7 @@ async function leaveCurrentRoom() {
   deleteAction = null;
   cancelTransferAction = null;
 
+  showBanner('');
   peersMap.clear();
   for (const [, record] of itemsMap.entries()) {
     if (record.blobUrl) URL.revokeObjectURL(record.blobUrl);
@@ -733,18 +814,20 @@ async function sendFiles(fileList) {
     const controller = new AbortController();
     activeSends.set(id, controller);
 
+    const cancelThisSend = () => {
+      if (!activeSends.has(id)) return;
+      controller.abort();
+      activeSends.delete(id);
+      cancelTransferAction?.send({ id, by: 'sender' }).catch(() => {});
+      removeTransferRow(key);
+      removeFeedItem(id);
+      showToast(`Cancelled sending ${file.name}`);
+    };
+
     const entry = getOrCreateTransferRow(
       key,
       `Sending ${file.name} (${formatBytes(file.size)})`,
-      () => {
-        if (!activeSends.has(id)) return;
-        controller.abort();
-        activeSends.delete(id);
-        cancelTransferAction?.send({ id, by: 'sender' }).catch(() => {});
-        removeTransferRow(key);
-        removeFeedItem(id);
-        showToast(`Cancelled sending ${file.name}`);
-      }
+      cancelThisSend
     );
 
     const metadata = {
@@ -768,7 +851,7 @@ async function sendFiles(fileList) {
         createdAt: metadata.createdAt,
         isSelf: true
       },
-      { blobUrl: localUrl, isIncoming: false }
+      { blobUrl: localUrl, isIncoming: false, onCancelSend: cancelThisSend }
     );
 
     fileAction
@@ -785,12 +868,14 @@ async function sendFiles(fileList) {
       })
       .then(() => {
         activeSends.delete(id);
+        hideCardCancelButton(id);
         finishTransferRow(key, 'Sent!');
       })
       .catch((err) => {
         const wasCancelled =
           controller.signal.aborted || err?.kind === 'aborted' || err?.name === 'AbortError';
         activeSends.delete(id);
+        hideCardCancelButton(id);
         if (wasCancelled) {
           removeTransferRow(key);
           removeFeedItem(id);
@@ -848,6 +933,12 @@ copyPinBtn.addEventListener('click', () => {
 
 toggleQrBtn.addEventListener('click', () => {
   qrPanel.classList.toggle('hidden');
+});
+
+reconnectBtn.addEventListener('click', () => {
+  if (!activePin) return;
+  showToast('Reconnecting room...');
+  enterRoom(activePin, { showQr: !qrPanel.classList.contains('hidden') });
 });
 
 copyUrlBtn.addEventListener('click', () => {
