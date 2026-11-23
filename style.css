@@ -45,13 +45,6 @@ body {
   margin-bottom: 24px;
 }
 
-.topbar-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
 .brand {
   display: flex;
   align-items: center;
@@ -425,6 +418,19 @@ body {
   font-size: 0.85rem;
 }
 
+.peer-mode {
+  font-size: 0.72rem;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+}
+
+.peer-mode.p2p {
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+}
+
 .peer-dot {
   width: 8px;
   height: 8px;
@@ -724,43 +730,6 @@ body {
   font-size: 0.88rem;
   color: var(--muted);
   text-align: center;
-}
-
-.turn-help {
-  font-size: 0.88rem;
-  color: var(--muted);
-}
-
-.turn-help code {
-  color: #93c5fd;
-  word-break: break-all;
-}
-
-.turn-form {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.turn-input {
-  width: 100%;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-size: 0.88rem;
-  outline: none;
-}
-
-.turn-input:focus {
-  border-color: var(--primary);
-}
-
-.turn-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
 }
 
 .toast {
