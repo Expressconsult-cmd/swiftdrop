@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Express SwiftDrop — P2P Drop & Reflect</title>
-  <link rel="stylesheet" href="style.css?v=5" />
+  <title>Express SwiftDrop — Drop & Reflect</title>
+  <link rel="stylesheet" href="style.css?v=6" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/5.16.1/mqtt.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 </head>
 <body>
@@ -12,7 +13,7 @@
     <div class="drop-overlay-box">
       <div class="drop-icon">⬇</div>
       <h2>Drop files to reflect</h2>
-      <p>Streams directly P2P to all paired devices</p>
+      <p>Encrypted and delivered to all connected devices</p>
     </div>
   </div>
 
@@ -32,50 +33,20 @@
     </div>
   </div>
 
-  <!-- TURN RELAY SETTINGS MODAL -->
-  <div id="turnModal" class="scanner-modal hidden">
-    <div class="card scanner-box">
-      <div class="scanner-header">
-        <h3>TURN Relay Settings (Optional)</h3>
-        <button id="closeTurnBtn" class="btn btn-sm btn-ghost" type="button">Close</button>
-      </div>
-      <p class="turn-help">
-        Not needed on the same Wi-Fi or Hotspot. To connect across <strong>mobile LTE &amp; separate Wi-Fi</strong>, paste a free Metered TURN API URL (<code>https://yourapp.metered.live/api/v1/turn/credentials?apiKey=...</code>):
-      </p>
-      <form id="turnForm" class="turn-form">
-        <input
-          id="turnUrlInput"
-          class="turn-input"
-          type="url"
-          placeholder="https://yourapp.metered.live/api/v1/turn/credentials?apiKey=..."
-        />
-        <div class="turn-actions">
-          <button id="clearTurnBtn" class="btn btn-danger btn-sm" type="button">Clear</button>
-          <button class="btn btn-primary btn-sm" type="submit">Save TURN URL</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
   <div class="app-shell">
     <header class="topbar">
       <div class="brand">
         <div class="brand-logo">⚡</div>
         <div>
           <h1>Express SwiftDrop</h1>
-          <p class="subtitle">Serverless P2P Drop &amp; Reflect</p>
+          <p class="subtitle">Drop &amp; Reflect across any network</p>
         </div>
       </div>
 
-      <div class="topbar-right">
-        <button id="turnBtn" class="btn btn-sm btn-ghost" type="button" title="Configure TURN relay for LTE/mobile networks">
-          ⚙ TURN
-        </button>
-        <div class="device-pill" id="devicePill" title="Click to rename your device">
-          <span id="deviceIcon">💻</span>
-          <span id="deviceNameDisplay">Detecting...</span>
-          <button id="editNameBtn" class="icon-btn" type="button" aria-label="Rename device">✎</button>
-        </div>
+      <div class="device-pill" id="devicePill" title="Click to rename your device">
+        <span id="deviceIcon">💻</span>
+        <span id="deviceNameDisplay">Detecting...</span>
+        <button id="editNameBtn" class="icon-btn" type="button" aria-label="Rename device">✎</button>
       </div>
     </header>
 
@@ -86,7 +57,7 @@
       <section class="card hero-card">
         <div class="card-badge">Host</div>
         <h2>Start a Sharing Room</h2>
-        <p>Generate a 6-digit PIN and pair your phone or another laptop directly — no server or login needed.</p>
+        <p>Generate a 6-digit PIN and connect your phone or another laptop across any Wi-Fi or mobile network.</p>
         <button id="createRoomBtn" class="btn btn-primary btn-lg" type="button">
           Generate 6-Digit PIN
         </button>
@@ -130,7 +101,7 @@
         </div>
 
         <div class="room-actions">
-          <span id="relayStatusBadge" class="relay-badge">Relays: connecting...</span>
+          <span id="relayStatusBadge" class="relay-badge">Cloud: connecting...</span>
           <button id="reconnectBtn" class="btn btn-sm btn-ghost" type="button">Reconnect</button>
           <label class="toggle-wrap" title="Automatically save incoming files on this device">
             <input type="checkbox" id="autoDownloadToggle" />
@@ -166,7 +137,7 @@
           <div class="dropzone-content">
             <div class="dz-icon">📁</div>
             <h3>Drop files here or tap to browse</h3>
-            <p>Photos, videos, docs, ZIPs — up to 500 MB per file (direct P2P)</p>
+            <p>Up to 100 MB over Cloud Relay (up to 500 MB on Direct P2P)</p>
             <button id="browseBtn" class="btn btn-primary" type="button">Select Files</button>
           </div>
         </div>
@@ -203,6 +174,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script type="module" src="app.js?v=5"></script>
+  <script type="module" src="app.js?v=6"></script>
 </body>
 </html>
