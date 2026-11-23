@@ -39,7 +39,6 @@ function rsEncode(data, ecCount) {
   return rem.slice(data.length);
 }
 
-// [version, totalDataCw, ecPerBlock, g1Blocks, g1Cw, g2Blocks, g2Cw, byteCapacity]
 const LEVEL_M_SPECS = [
   [1, 16, 10, 1, 16, 0, 0, 14],
   [2, 28, 16, 1, 28, 0, 0, 26],
@@ -67,7 +66,6 @@ const ALIGN_CENTERS = {
 };
 
 function getFormatBits(mask) {
-  // Error Correction Level M = 00
   const d = mask << 10;
   let rem = d;
   for (let i = 14; i >= 10; i--) {
@@ -102,7 +100,6 @@ function maskCondition(mask, r, c) {
 function computePenalty(grid, size) {
   let penalty = 0;
 
-  // Rule 1: 5+ consecutive same-color modules in rows/cols
   for (let r = 0; r < size; r++) {
     let runR = 1;
     let runC = 1;
@@ -125,7 +122,6 @@ function computePenalty(grid, size) {
     }
   }
 
-  // Rule 2: 2x2 blocks
   for (let r = 0; r < size - 1; r++) {
     for (let c = 0; c < size - 1; c++) {
       const val = grid[r][c];
@@ -135,7 +131,6 @@ function computePenalty(grid, size) {
     }
   }
 
-  // Rule 3: Finder-like 1:1:3:1:1 patterns
   const patA = [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0];
   const patB = [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1];
   for (let r = 0; r < size; r++) {
@@ -155,7 +150,6 @@ function computePenalty(grid, size) {
     }
   }
 
-  // Rule 4: Dark ratio balance
   let dark = 0;
   for (let r = 0; r < size; r++) {
     for (let c = 0; c < size; c++) dark += grid[r][c];
@@ -174,7 +168,6 @@ function buildBitStream(bytes, spec) {
     for (let i = len - 1; i >= 0; i--) bits.push((val >> i) & 1);
   };
 
-  // Byte mode (0100)
   pushBits(0b0100, 4);
   pushBits(bytes.length, version >= 10 ? 16 : 8);
   for (const b of bytes) pushBits(b, 8);
@@ -212,7 +205,6 @@ function encodeQrMatrix(text) {
   const [version, , ecPerBlock, g1Blocks, g1Cw, g2Blocks, g2Cw] = spec;
   const dataCw = buildBitStream(bytes, spec);
 
-  // Split into RS blocks
   const dataBlocks = [];
   const ecBlocks = [];
   let offset = 0;
@@ -230,7 +222,6 @@ function encodeQrMatrix(text) {
     ecBlocks.push(rsEncode(block, ecPerBlock));
   }
 
-  // Interleave codewords
   const finalBytes = [];
   const maxDataLen = Math.max(g1Cw, g2Cw);
   for (let col = 0; col < maxDataLen; col++) {
@@ -258,7 +249,6 @@ function encodeQrMatrix(text) {
     isFn[r][c] = 1;
   };
 
-  // Finder patterns + 1-module separators
   const drawFinder = (r0, c0) => {
     for (let r = r0 - 1; r <= r0 + 7; r++) {
       for (let c = c0 - 1; c <= c0 + 7; c++) {
@@ -278,14 +268,12 @@ function encodeQrMatrix(text) {
   drawFinder(0, size - 7);
   drawFinder(size - 7, 0);
 
-  // Timing patterns
   for (let i = 8; i < size - 8; i++) {
     const val = i % 2 === 0 ? 1 : 0;
     setFn(6, i, val);
     setFn(i, 6, val);
   }
 
-  // Alignment patterns
   const centers = ALIGN_CENTERS[version];
   for (const cr of centers) {
     for (const cc of centers) {
@@ -303,10 +291,8 @@ function encodeQrMatrix(text) {
     }
   }
 
-  // Fixed dark module
   setFn(size - 8, 8, 1);
 
-  // Reserve format info zones
   for (let i = 0; i <= 8; i++) {
     if (i !== 6) {
       isFn[8][i] = 1;
@@ -318,7 +304,6 @@ function encodeQrMatrix(text) {
     if (i < 7) isFn[size - 1 - i][8] = 1;
   }
 
-  // Version info (versions 7+)
   if (version >= 7) {
     const vBits = getVersionBits(version);
     for (let i = 0; i < 18; i++) {
@@ -330,7 +315,6 @@ function encodeQrMatrix(text) {
     }
   }
 
-  // Zigzag placement
   let bitIdx = 0;
   let up = true;
   for (let right = size - 1; right >= 1; right -= 2) {
@@ -348,8 +332,6 @@ function encodeQrMatrix(text) {
     up = !up;
   }
 
-  // Choose lowest-penalty mask
-  let bestMask = 0;
   let bestScore = Infinity;
   let bestGrid = null;
 
@@ -364,26 +346,23 @@ function encodeQrMatrix(text) {
     }
 
     const fmt = getFormatBits(mask);
-    // Copy 1
     for (let i = 0; i <= 5; i++) grid[8][i] = (fmt >> (14 - i)) & 1;
     grid[8][7] = (fmt >> 8) & 1;
     grid[8][8] = (fmt >> 7) & 1;
     grid[7][8] = (fmt >> 6) & 1;
     for (let i = 0; i <= 5; i++) grid[5 - i][8] = (fmt >> (5 - i)) & 1;
 
-    // Copy 2
     for (let i = 0; i < 7; i++) grid[size - 1 - i][8] = (fmt >> (14 - i)) & 1;
     for (let i = 0; i < 8; i++) grid[8][size - 8 + i] = (fmt >> (7 - i)) & 1;
 
     const score = computePenalty(grid, size);
     if (score < bestScore) {
       bestScore = score;
-      bestMask = mask;
       bestGrid = grid;
     }
   }
 
-  return { size, grid: bestGrid, mask: bestMask };
+  return { size, grid: bestGrid };
 }
 
 export function createQrSvg(text, quietZone = 4) {
