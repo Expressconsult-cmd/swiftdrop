@@ -1,11 +1,14 @@
 import { joinRoom, getRelaySockets } from 'https://esm.run/trystero@0.27.0';
-import { createQrSvgDataUrl } from './qr.js?v=4';
+import { createQrSvgDataUrl } from './qr.js?v=5';
 
 const MAX_FILE_BYTES = 500 * 1024 * 1024; // 500 MB per file
 
-// Scoped only to host so /repo, /repo/, and /repo/index.html always connect to the exact same room
+// Optional: paste your free Metered TURN API URL here so ALL devices automatically work across LTE/Wi-Fi
+// Example: 'https://yourapp.metered.live/api/v1/turn/credentials?apiKey=YOUR_API_KEY'
+const DEFAULT_TURN_API_URL = '';
+
 const APP_ID =
-  'express-swiftdrop-v4-' +
+  'express-swiftdrop-v5-' +
   window.location.host.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 40);
 
 // Elements
@@ -15,6 +18,13 @@ const statusBanner = document.getElementById('statusBanner');
 const devicePill = document.getElementById('devicePill');
 const deviceIconEl = document.getElementById('deviceIcon');
 const deviceNameDisplay = document.getElementById('deviceNameDisplay');
+
+const turnBtn = document.getElementById('turnBtn');
+const turnModal = document.getElementById('turnModal');
+const closeTurnBtn = document.getElementById('closeTurnBtn');
+const turnForm = document.getElementById('turnForm');
+const turnUrlInput = document.getElementById('turnUrlInput');
+const clearTurnBtn = document.getElementById('clearTurnBtn');
 
 const createRoomBtn = document.getElementById('createRoomBtn');
 const joinForm = document.getElementById('joinForm');
@@ -68,11 +78,11 @@ let relayPollTimer = null;
 let scannerStream = null;
 let scannerRafId = null;
 
-const peersMap = new Map(); // peerId -> { name, type }
-const itemsMap = new Map(); // itemId -> { item, blobUrl, cancelBtn? }
-const transferRows = new Map(); // key -> { row, fill, statSpan, cancelBtn, startTime }
-const activeSends = new Map(); // fileId -> AbortController
-const cancelledReceives = new Set(); // fileId
+const peersMap = new Map();
+const itemsMap = new Map();
+const transferRows = new Map();
+const activeSends = new Map();
+const cancelledReceives = new Set();
 let localTextHistory = [];
 let toastTimer = null;
 let dragDepth = 0;
@@ -159,6 +169,31 @@ function generateSixDigitPin() {
   const arr = new Uint32Array(1);
   crypto.getRandomValues(arr);
   return String(100000 + (arr[0] % 900000));
+}
+
+function getTurnApiUrl() {
+  return (localStorage.getItem('express_swiftdrop_turn_url') || DEFAULT_TURN_API_URL || '').trim();
+}
+
+async function fetchTurnServers() {
+  const url = getTurnApiUrl();
+  if (!url) return [];
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 4000);
+  try {
+    const res = await fetch(url, { signal: ctrl.signal });
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
+    return data.filter((entry) => {
+      const urls = Array.isArray(entry?.urls) ? entry.urls.join(',') : String(entry?.urls || '');
+      return urls.includes('turn:');
+    });
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function updateUrlPin(pin) {
@@ -577,22 +612,20 @@ async function enterRoom(pin, { showQr = false } = {}) {
   updateQrCode();
   renderPeers();
 
+  const turnServers = await fetchTurnServers();
+  if (activePin !== pin) return;
+
   try {
-    room = joinRoom(
-      {
-        appId: APP_ID,
-        identity: 'none',
-        maxReceiveBytes: MAX_FILE_BYTES + 64 * 1024 * 1024,
-        rtcConfig: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun.cloudflare.com:3478' }
-          ]
-        }
-      },
-      pin
-    );
+    const roomConfig = {
+      appId: APP_ID,
+      identity: 'none',
+      maxReceiveBytes: MAX_FILE_BYTES + 64 * 1024 * 1024
+    };
+    if (turnServers.length > 0) {
+      roomConfig.turnConfig = turnServers;
+    }
+
+    room = joinRoom(roomConfig, pin);
   } catch (err) {
     showBanner(`Could not start room: ${err?.message || 'Connection error'}`);
     return;
@@ -605,7 +638,9 @@ async function enterRoom(pin, { showQr = false } = {}) {
   room.onError((err) => {
     const code = err?.code || '';
     if (code === 'peer-connect-failed') {
-      showBanner('Peer found, but direct P2P handshake was blocked by network/NAT. Connecting both devices to the same Wi-Fi or Hotspot usually fixes this.');
+      showBanner(
+        'Devices found each other, but your mobile LTE / firewall / VPN blocked direct P2P. Quick fix: connect both devices to the same Wi-Fi or Phone Hotspot (disable VPN) and tap Reconnect — or add a free TURN URL in ⚙ TURN.'
+      );
     } else if (code === 'relay-failed') {
       showBanner('Signaling relay unreachable. Check your internet connection and tap Reconnect.');
     } else if (err?.message) {
@@ -763,9 +798,7 @@ async function leaveCurrentRoom() {
   if (room) {
     try {
       await room.leave();
-    } catch {
-      // Ignore cleanup errors
-    }
+    } catch {}
   }
   room = null;
   activePin = null;
@@ -899,6 +932,35 @@ devicePill.addEventListener('click', () => {
     renderPeers();
     helloAction?.send({ name: deviceInfo.name, type: deviceInfo.type }).catch(() => {});
   }
+});
+
+turnBtn.addEventListener('click', () => {
+  turnUrlInput.value = localStorage.getItem('express_swiftdrop_turn_url') || '';
+  turnModal.classList.remove('hidden');
+});
+
+closeTurnBtn.addEventListener('click', () => turnModal.classList.add('hidden'));
+turnModal.addEventListener('click', (e) => {
+  if (e.target === turnModal) turnModal.classList.add('hidden');
+});
+
+turnForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const val = turnUrlInput.value.trim();
+  if (val) {
+    localStorage.setItem('express_swiftdrop_turn_url', val);
+    showToast('TURN URL saved! Tap Reconnect if in a room.');
+  } else {
+    localStorage.removeItem('express_swiftdrop_turn_url');
+  }
+  turnModal.classList.add('hidden');
+});
+
+clearTurnBtn.addEventListener('click', () => {
+  localStorage.removeItem('express_swiftdrop_turn_url');
+  turnUrlInput.value = '';
+  turnModal.classList.add('hidden');
+  showToast('TURN URL cleared.');
 });
 
 createRoomBtn.addEventListener('click', () => {
