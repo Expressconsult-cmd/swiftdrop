@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Express SwiftDrop — P2P Drop & Reflect</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=4" />
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 </head>
 <body>
@@ -100,6 +100,8 @@
         </div>
 
         <div class="room-actions">
+          <span id="relayStatusBadge" class="relay-badge">Relays: connecting...</span>
+          <button id="reconnectBtn" class="btn btn-sm btn-ghost" type="button">Reconnect</button>
           <label class="toggle-wrap" title="Automatically save incoming files on this device">
             <input type="checkbox" id="autoDownloadToggle" />
             <span class="toggle-slider"></span>
@@ -171,6 +173,6 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
-  <script type="module" src="app.js"></script>
+  <script type="module" src="app.js?v=4"></script>
 </body>
 </html>
